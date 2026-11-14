@@ -1,8 +1,8 @@
 # Calendar Wallpaper — update channel
 
 Upload the CONTENTS of this folder to the root of the public GitHub repo
-`maheshkaranam/calendar-wallpaper` (branch `main`). The wallpaper loads its
-CSS/JS from `https://cdn.jsdelivr.net/gh/maheshkaranam/calendar-wallpaper@main/`
+`maheshjoys-Pega/calendar-wallpaper` (branch `main`). The wallpaper loads its
+CSS/JS from `https://cdn.jsdelivr.net/gh/maheshjoys-Pega/calendar-wallpaper@main/`
 at runtime; the bundled copies inside the Lively package are the offline
 fallback, so a missing or broken host never blanks the wallpaper.
 
