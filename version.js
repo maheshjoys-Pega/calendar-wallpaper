@@ -8,7 +8,7 @@
 // reload. No reinstall, no re-import.
 window.CW_HOSTED = {
   app: "CalendarWallpaper",
-  version: "1.3.0",
+  version: "1.3.1",
   css: "css/wallpaper.css",
   js: ["js/feed.js", "js/calendar.js"]
 };
