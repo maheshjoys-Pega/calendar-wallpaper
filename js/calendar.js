@@ -286,28 +286,68 @@
     return dateStr + "T" + pad(+t[0]) + ":" + pad(+t[1]) + ":00" + tzOffsetStr(d);
   }
 
-  function addTodoRow(text, done, afterRow) {
+  // To-do rows (v1.3.1, Mahesh Nov 14): exactly ONE editing row (always
+  // last) plus committed read-only rows above it. Enter commits the editing
+  // row — it becomes plain text with only its checkbox — and a fresh
+  // editing row opens below. Ticking a checkbox strikes the item through;
+  // the tick is what buildNotes serialises as ☑ into the saved entry.
+  function todoRowShell(done) {
     var row = document.createElement("div");
     row.className = "ftodo";
     var cb = document.createElement("input");
     cb.type = "checkbox"; cb.className = "ft-done"; cb.checked = !!done;
+    cb.addEventListener("change", function () {
+      row.classList.toggle("done", cb.checked);
+    });
+    if (done) row.classList.add("done");
+    row.appendChild(cb);
+    return row;
+  }
+  function addTodoRow(text, done, afterRow) {
+    // The editing row: checkbox + text input (no buttons). Returns the input.
+    var row = todoRowShell(done);
+    row.classList.add("editing");
     var tx = document.createElement("input");
     tx.type = "text"; tx.className = "ft-text"; tx.placeholder = "To-do item";
     tx.autocomplete = "off"; tx.value = text || "";
-    var x = document.createElement("button");
-    x.type = "button"; x.className = "ft-x"; x.textContent = "✕"; x.title = "Remove";
-    x.addEventListener("click", function () { row.remove(); });
-    row.appendChild(cb); row.appendChild(tx); row.appendChild(x);
-    // Insert directly below `afterRow` when given (Enter flow), else append.
+    row.appendChild(tx);
     if (afterRow && afterRow.parentNode === el("f-todos")) afterRow.after(row);
     else el("f-todos").appendChild(row);
     return tx;
   }
+  function commitTodoRow(row) {
+    // Editing row -> read-only row: checkbox + plain text, nothing else.
+    // An empty row is discarded instead of committed.
+    var tx = row.querySelector(".ft-text");
+    if (!tx) return;
+    var text = tx.value.trim();
+    if (!text) { row.remove(); return; }
+    var label = document.createElement("span");
+    label.className = "ft-label";
+    label.textContent = text;
+    label.title = "Click to edit";
+    tx.replaceWith(label);
+    row.classList.remove("editing");
+    row.classList.add("committed");
+  }
+  function editingTodoRow() { return el("f-todos").querySelector(".ftodo.editing"); }
+  function ensureEditingRow() {
+    var ed = editingTodoRow();
+    if (ed) return ed.querySelector(".ft-text");
+    return addTodoRow("", false);
+  }
+  function maybeAutofillTitle() {
+    // A to-do entry needs no separate title — it is simply "To do list".
+    var t = el("f-title");
+    if (!t.value.trim()) t.value = "To do list";
+  }
   function collectTodos() {
     var out = [];
     el("f-todos").querySelectorAll(".ftodo").forEach(function (row) {
+      var tx = row.querySelector(".ft-text");
+      var lb = row.querySelector(".ft-label");
       out.push({
-        text: row.querySelector(".ft-text").value,
+        text: tx ? tx.value : (lb ? lb.textContent : ""),
         done: row.querySelector(".ft-done").checked
       });
     });
@@ -362,8 +402,14 @@
   }
 
   function saveForm() {
+    var todos = collectTodos();
     var title = el("f-title").value.trim();
-    if (!title) { formError("A title is required."); return; }
+    if (!title && todos.some(function (t) { return t.text.trim(); })) {
+      // A to-do list needs no separate title — it is simply "To do list",
+      // so the title requirement never blocks saving one (v1.3.1).
+      title = "To do list";
+    }
+    if (!title) { formError("A title is required."); el("f-title").focus(); return; }
     var allDay = el("f-allday").checked;
     var start = null, end = null;
     if (!allDay) {
@@ -381,7 +427,7 @@
       start: start,
       end: end,
       target: formTarget,
-      notes: buildNotes(el("f-notes").value, collectTodos())
+      notes: buildNotes(el("f-notes").value, todos)
     };
     if (!window.CWFeed || !CWFeed.saveEntry) {
       formError("Companion isn’t responding. It starts with Windows on its own — wait a few seconds and press Save again. Your entry is kept.");
@@ -440,10 +486,12 @@
     });
     document.getElementById("f-tg-google").addEventListener("click", function () { setTarget("google"); });
     document.getElementById("f-tg-reminder").addEventListener("click", function () { setTarget("reminder"); });
-    // To-do rows (v1.3.0, Mahesh Nov 14): no "+ Add item" button — Enter in
-    // a row opens the next row directly below and moves focus into it
-    // (checklist flow, like Google Keep); Enter never submits the form.
-    // Backspace in an empty row removes that row and focuses the previous.
+    // To-do rows (v1.3.1, Mahesh Nov 14): no "+ Add item" button. Enter
+    // commits the typed item — it turns read-only (text + checkbox only) —
+    // and opens a fresh editing row below; Enter never submits the form,
+    // and Enter on an empty row adds nothing. Backspace in the empty
+    // editing row pulls the last committed item back into it (to fix or
+    // clear it); clicking a committed item does the same.
     el("f-todos").addEventListener("keydown", function (e) {
       var tx = e.target;
       if (!tx || !tx.classList || !tx.classList.contains("ft-text")) return;
@@ -452,20 +500,41 @@
       if (e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
-        addTodoRow("", false, row).focus();
+        if (!tx.value.trim()) return;
+        commitTodoRow(row);
+        maybeAutofillTitle();
+        ensureEditingRow().focus();
       } else if (e.key === "Backspace" && tx.value === "") {
-        var rows = el("f-todos").querySelectorAll(".ftodo");
-        if (rows.length > 1) {
-          e.preventDefault();
-          var prev = row.previousElementSibling;
-          row.remove();
-          if (prev) {
-            var p = prev.querySelector(".ft-text");
-            p.focus();
-            var v = p.value; p.value = ""; p.value = v; // caret to the end
-          }
+        e.preventDefault();
+        var committed = el("f-todos").querySelectorAll(".ftodo.committed");
+        var last = committed[committed.length - 1];
+        if (last) {
+          var done = last.querySelector(".ft-done").checked;
+          tx.value = last.querySelector(".ft-label").textContent;
+          last.remove();
+          row.querySelector(".ft-done").checked = done;
+          row.classList.toggle("done", done);
+          var v = tx.value; tx.value = ""; tx.value = v; // caret to the end
         }
       }
+    });
+    // Clicking a committed item loads it back into the editing row (which
+    // stays last); anything half-typed there is committed first.
+    el("f-todos").addEventListener("click", function (e) {
+      var lb = e.target;
+      if (!lb || !lb.classList || !lb.classList.contains("ft-label")) return;
+      var row = lb.closest(".ftodo");
+      if (!row) return;
+      var ed = editingTodoRow();
+      if (ed) {
+        var cur = ed.querySelector(".ft-text");
+        if (cur && cur.value.trim()) commitTodoRow(ed); else ed.remove();
+      }
+      var done = row.querySelector(".ft-done").checked;
+      var tx = addTodoRow(lb.textContent, done);
+      row.remove();
+      tx.focus();
+      var v = tx.value; tx.value = ""; tx.value = v; // caret to the end
     });
     document.getElementById("f-save").addEventListener("click", saveForm);
     document.getElementById("f-cancel").addEventListener("click", cancelForm);
